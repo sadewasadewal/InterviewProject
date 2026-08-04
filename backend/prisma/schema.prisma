@@ -1,0 +1,96 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Station {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String   @unique
+  distanceKm  Float
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  journeyStations JourneyStation[]
+  bookingsStart   Booking[]        @relation("StartStation")
+  bookingsEnd     Booking[]        @relation("EndStation")
+}
+
+model Journey {
+  id            String   @id @default(uuid())
+  name          String
+  departureTime DateTime
+  direction     String   // "OUTBOUND" | "INBOUND"
+  status        String   @default("SCHEDULED") // "SCHEDULED" | "ACTIVE" | "COMPLETED"
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  journeyStations JourneyStation[]
+  bookings        Booking[]
+}
+
+model JourneyStation {
+  id            String   @id @default(uuid())
+  journeyId     String
+  stationId     String
+  stopSequence  Int
+  arrivalTime   DateTime
+  departureTime DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  journey Journey @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  station Station @relation(fields: [stationId], references: [id], onDelete: Cascade)
+
+  @@unique([journeyId, stationId])
+  @@unique([journeyId, stopSequence])
+}
+
+model Coach {
+  id         String   @id @default(uuid())
+  name       String   @unique
+  coachClass String   // "1st Class Reserved", "2nd Class Reserved", "3rd Class Reserved"
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  seats Seat[]
+}
+
+model Seat {
+  id         String   @id @default(uuid())
+  coachId    String
+  seatNumber String   // e.g. "01", "02", "03", "04", "05"...
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  coach    Coach     @relation(fields: [coachId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@unique([coachId, seatNumber])
+}
+
+model Booking {
+  id               String   @id @default(uuid())
+  journeyId        String
+  seatId           String
+  passengerName    String
+  passengerEmail   String
+  startStationId   String
+  endStationId     String
+  startSequence    Int
+  endSequence      Int
+  fare             Float
+  bookingReference String   @unique // e.g. PNR-XXXXXX
+  status           String   @default("CONFIRMED") // "CONFIRMED" | "CANCELLED"
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  journey      Journey @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  seat         Seat    @relation(fields: [seatId], references: [id], onDelete: Cascade)
+  startStation Station @relation(fields: [startStationId], references: [id], name: "StartStation", onDelete: Cascade)
+  endStation   Station @relation(fields: [endStationId], references: [id], name: "EndStation", onDelete: Cascade)
+}
