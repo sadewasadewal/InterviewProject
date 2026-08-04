@@ -176,30 +176,98 @@ function App() {
       const data = await res.json();
 
       if (!res.ok) {
-        // Handle concurrency double booking conflict (status 409)
         if (res.status === 409) {
           setBookingError(
             'Seat Reservation Conflict: This seat was booked by another passenger for an overlapping leg just a moment ago. Please select another seat.'
           );
-          // Refresh availability to show latest state
           handleSelectJourney(selectedJourney);
           return;
         }
         throw new Error(data.error || 'Booking failed');
       }
 
-      // Success
       setReceipt(data);
       setPassengerName('');
       setPassengerEmail('');
       setSelectedSeat(null);
-      // Refresh availability
       handleSelectJourney(selectedJourney);
     } catch (err: any) {
       setBookingError(err.message || 'An unexpected error occurred.');
     } finally {
       setBookingLoading(false);
     }
+  };
+
+  const handleJoinWaitlist = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedJourney || !selectedSeat || !availability) return;
+
+    setBookingLoading(true);
+    setBookingError(null);
+
+    const payload = {
+      journeyId: selectedJourney.id,
+      seatId: selectedSeat.id,
+      passengerName,
+      passengerEmail,
+      startStationId: originId,
+      endStationId: destinationId,
+    };
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/waitlists`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || 'Waitlist registration failed');
+      }
+
+      alert(`Successfully registered on the waitlist for Seat ${selectedSeat.seatNumber} in ${currentCoach?.name}. You will be automatically booked and promoted if this seat becomes vacant!`);
+      setPassengerName('');
+      setPassengerEmail('');
+      setSelectedSeat(null);
+      handleSelectJourney(selectedJourney);
+    } catch (err: any) {
+      setBookingError(err.message || 'An unexpected error occurred.');
+    } finally {
+      setBookingLoading(false);
+    }
+  };
+
+  const handleDownloadTicket = () => {
+    if (!receipt) return;
+    const ticketText = `
++--------------------------------------------------------+
+|                  SRI LANKA RAILWAYS                    |
+|                     BOARDING PASS                      |
++--------------------------------------------------------+
+|  PNR REFERENCE : ${receipt.bookingReference}                    |
+|  PASSENGER     : ${receipt.passengerName.padEnd(38)} |
+|  EMAIL         : ${receipt.passengerEmail.padEnd(38)} |
+|  TRAIN SERVICE : ${receipt.journey.name.padEnd(38)} |
+|  DEPARTURE     : ${new Date(receipt.journey.departureTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }).padEnd(38)} |
+|  ROUTE LEG     : ${(receipt.startStation.name + ' -> ' + receipt.endStation.name).padEnd(38)} |
+|  CARRIAGE      : ${receipt.seat.coach.name.padEnd(38)} |
+|  CARRIAGE CLASS: ${receipt.seat.coach.coachClass.padEnd(38)} |
+|  SEAT ASSIGNED : ${receipt.seat.seatNumber.padEnd(38)} |
+|  FARE PAID     : LKR ${receipt.fare.toLocaleString().padEnd(34)} |
++--------------------------------------------------------+
+|           THANK YOU FOR TRAVELLING WITH US             |
+|       PLEASE HAVE A PRINTED OR DIGITAL COPY READY      |
++--------------------------------------------------------+
+`;
+    const element = document.createElement('a');
+    const file = new Blob([ticketText], { type: 'text/plain' });
+    element.href = URL.createObjectURL(file);
+    element.download = `ticket-${receipt.bookingReference}.txt`;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
   };
 
   const currentCoach = availability?.coaches[selectedCoachIndex];
@@ -330,7 +398,7 @@ function App() {
           {/* Right Column: Seat Map & Details */}
           <div>
             {availability && selectedJourney ? (
-              <div className="glass-card dashboard-grid" style={{ gridTemplateColumns: '1.2fr 1fr', gap: '2rem' }}>
+              <div className="glass-card booking-panel-grid">
                 {/* SVG Seat Map Selector */}
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                   <h3 style={{ marginBottom: '1rem', alignSelf: 'flex-start', fontSize: '1.2rem' }}>Select Reserved Seat</h3>
@@ -365,102 +433,178 @@ function App() {
                   <h3 style={{ marginBottom: '1.5rem', fontSize: '1.2rem' }}>Ticket Reservation</h3>
 
                   {selectedSeat ? (
-                    <form onSubmit={handleBookSeat} className="checkout-summary">
-                      <div className="summary-row">
-                        <span style={{ color: 'var(--text-muted)' }}>Train</span>
-                        <span>{selectedJourney.name}</span>
-                      </div>
-                      <div className="summary-row">
-                        <span style={{ color: 'var(--text-muted)' }}>Coach</span>
-                        <span>{currentCoach?.name}</span>
-                      </div>
-                      <div className="summary-row">
-                        <span style={{ color: 'var(--text-muted)' }}>Seat Class</span>
-                        <span style={{ color: 'var(--accent)' }}>{currentCoach?.class}</span>
-                      </div>
-                      <div className="summary-row">
-                        <span style={{ color: 'var(--text-muted)' }}>Seat Code</span>
-                        <span style={{ fontWeight: 'bold' }}>{selectedSeat.seatNumber}</span>
-                      </div>
-                      <div className="summary-row">
-                        <span style={{ color: 'var(--text-muted)' }}>Leg Distance</span>
-                        <span>{availability.distanceKm.toFixed(1)} km</span>
-                      </div>
-                      
-                      {/* Highlight segment-reuse */}
-                      {selectedSeat.status === 'SHARED_AVAILABLE' && (
-                        <div style={{
-                          background: 'rgba(16, 185, 129, 0.1)',
-                          border: '1px solid rgba(16, 185, 129, 0.2)',
-                          borderRadius: '8px',
-                          padding: '0.75rem',
-                          fontSize: '0.8rem',
-                          color: 'var(--state-shared)',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '0.5rem'
-                        }}>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-                          </svg>
-                          <span><strong>Seat Optimization:</strong> Reselling a vacated portion of this seat!</span>
+                    selectedSeat.status === 'OCCUPIED' ? (
+                      <form onSubmit={handleJoinWaitlist} className="checkout-summary">
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Train</span>
+                          <span>{selectedJourney.name}</span>
                         </div>
-                      )}
-
-                      <div className="summary-row total">
-                        <span>Total Price</span>
-                        <span>LKR {currentFare?.toLocaleString()}</span>
-                      </div>
-
-                      <div style={{ marginTop: '1rem' }}>
-                        <div className="form-group">
-                          <label htmlFor="passengerName">Passenger Name</label>
-                          <input
-                            type="text"
-                            id="passengerName"
-                            className="form-input"
-                            value={passengerName}
-                            onChange={(e) => setPassengerName(e.target.value)}
-                            placeholder="John Doe"
-                            required
-                          />
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Coach</span>
+                          <span>{currentCoach?.name}</span>
                         </div>
-                        <div className="form-group">
-                          <label htmlFor="passengerEmail">Passenger Email</label>
-                          <input
-                            type="email"
-                            id="passengerEmail"
-                            className="form-input"
-                            value={passengerEmail}
-                            onChange={(e) => setPassengerEmail(e.target.value)}
-                            placeholder="john.doe@example.com"
-                            required
-                          />
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Seat Class</span>
+                          <span style={{ color: 'var(--accent)' }}>{currentCoach?.class}</span>
                         </div>
-                      </div>
-
-                      {bookingError && (
-                        <div style={{
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          border: '1px solid rgba(239, 68, 68, 0.2)',
-                          padding: '0.75rem',
-                          borderRadius: '8px',
-                          color: '#f87171',
-                          fontSize: '0.8rem',
-                          lineHeight: '1.4'
-                        }}>
-                          {bookingError}
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Seat Code</span>
+                          <span style={{ fontWeight: 'bold' }}>{selectedSeat.seatNumber}</span>
                         </div>
-                      )}
+                        
+                        <div className="waitlist-alert">
+                          <strong>Carriage Waitlisting:</strong> This seat is currently occupied on overlapping segments of this journey.
+                          <br /><br />
+                          You can register for the waitlist. If this seat's segments are vacated, you will be <strong>automatically promoted</strong> to a confirmed booking.
+                        </div>
 
-                      <button
-                        type="submit"
-                        className="btn btn-primary"
-                        disabled={bookingLoading}
-                      >
-                        {bookingLoading ? 'Issuing Ticket...' : 'Confirm Ticket Reservation'}
-                      </button>
-                    </form>
+                        <div style={{ marginTop: '1rem' }}>
+                          <div className="form-group">
+                            <label htmlFor="passengerName">Passenger Name</label>
+                            <input
+                              type="text"
+                              id="passengerName"
+                              className="form-input"
+                              value={passengerName}
+                              onChange={(e) => setPassengerName(e.target.value)}
+                              placeholder="John Doe"
+                              required
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label htmlFor="passengerEmail">Passenger Email</label>
+                            <input
+                              type="email"
+                              id="passengerEmail"
+                              className="form-input"
+                              value={passengerEmail}
+                              onChange={(e) => setPassengerEmail(e.target.value)}
+                              placeholder="john.doe@example.com"
+                              required
+                            />
+                          </div>
+                        </div>
+
+                        {bookingError && (
+                          <div style={{
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                            padding: '0.75rem',
+                            borderRadius: '8px',
+                            color: '#f87171',
+                            fontSize: '0.8rem',
+                            lineHeight: '1.4'
+                          }}>
+                            {bookingError}
+                          </div>
+                        )}
+
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          disabled={bookingLoading}
+                        >
+                          {bookingLoading ? 'Registering...' : 'Join Carriage Waitlist'}
+                        </button>
+                      </form>
+                    ) : (
+                      <form onSubmit={handleBookSeat} className="checkout-summary">
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Train</span>
+                          <span>{selectedJourney.name}</span>
+                        </div>
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Coach</span>
+                          <span>{currentCoach?.name}</span>
+                        </div>
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Seat Class</span>
+                          <span style={{ color: 'var(--accent)' }}>{currentCoach?.class}</span>
+                        </div>
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Seat Code</span>
+                          <span style={{ fontWeight: 'bold' }}>{selectedSeat.seatNumber}</span>
+                        </div>
+                        <div className="summary-row">
+                          <span style={{ color: 'var(--text-muted)' }}>Leg Distance</span>
+                          <span>{availability.distanceKm.toFixed(1)} km</span>
+                        </div>
+                        
+                        {/* Highlight segment-reuse */}
+                        {selectedSeat.status === 'SHARED_AVAILABLE' && (
+                          <div style={{
+                            background: 'rgba(255, 255, 255, 0.05)',
+                            border: '1px solid rgba(255, 255, 255, 0.1)',
+                            borderRadius: '8px',
+                            padding: '0.75rem',
+                            fontSize: '0.8rem',
+                            color: 'var(--text-main)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '0.5rem'
+                          }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                            </svg>
+                            <span><strong>Seat Optimization:</strong> Reselling a vacated portion of this seat!</span>
+                          </div>
+                        )}
+
+                        <div className="summary-row total">
+                          <span>Total Price</span>
+                          <span>LKR {currentFare?.toLocaleString()}</span>
+                        </div>
+
+                        <div style={{ marginTop: '1rem' }}>
+                          <div className="form-group">
+                            <label htmlFor="passengerName">Passenger Name</label>
+                            <input
+                              type="text"
+                              id="passengerName"
+                              className="form-input"
+                              value={passengerName}
+                              onChange={(e) => setPassengerName(e.target.value)}
+                              placeholder="John Doe"
+                              required
+                            />
+                          </div>
+                          <div className="form-group">
+                            <label htmlFor="passengerEmail">Passenger Email</label>
+                            <input
+                              type="email"
+                              id="passengerEmail"
+                              className="form-input"
+                              value={passengerEmail}
+                              onChange={(e) => setPassengerEmail(e.target.value)}
+                              placeholder="john.doe@example.com"
+                              required
+                            />
+                          </div>
+                        </div>
+
+                        {bookingError && (
+                          <div style={{
+                            background: 'rgba(239, 68, 68, 0.1)',
+                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                            padding: '0.75rem',
+                            borderRadius: '8px',
+                            color: '#f87171',
+                            fontSize: '0.8rem',
+                            lineHeight: '1.4'
+                          }}>
+                            {bookingError}
+                          </div>
+                        )}
+
+                        <button
+                          type="submit"
+                          className="btn btn-primary"
+                          disabled={bookingLoading}
+                        >
+                          {bookingLoading ? 'Issuing Ticket...' : 'Confirm Ticket Reservation'}
+                        </button>
+                      </form>
+                    )
                   ) : (
                     <div style={{
                       padding: '3rem 1rem',
@@ -469,7 +613,7 @@ function App() {
                       border: '1px dashed rgba(255,255,255,0.05)',
                       borderRadius: '12px'
                     }}>
-                      <p style={{ fontSize: '0.9rem' }}>Please select a vacant seat from the coach layout to book.</p>
+                      <p style={{ fontSize: '0.9rem' }}>Please select a seat from the coach layout to book or join the waitlist.</p>
                     </div>
                   )}
                 </div>
@@ -505,13 +649,13 @@ function App() {
               <div style={{
                 width: '60px',
                 height: '60px',
-                background: 'rgba(16, 185, 129, 0.1)',
-                border: '2px solid var(--state-shared)',
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '2px solid #ffffff',
                 borderRadius: '50%',
                 display: 'inline-flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                color: 'var(--state-shared)',
+                color: '#ffffff',
                 marginBottom: '1rem'
               }}>
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
@@ -535,7 +679,7 @@ function App() {
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-muted)' }}>Ticket PNR:</span>
-                <strong style={{ color: 'var(--accent)', fontFamily: 'monospace', fontSize: '1.05rem' }}>
+                <strong style={{ color: '#ffffff', fontFamily: 'monospace', fontSize: '1.05rem' }}>
                   {receipt.bookingReference}
                 </strong>
               </div>
@@ -561,7 +705,7 @@ function App() {
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed rgba(255,255,255,0.1)', paddingTop: '0.75rem', marginTop: '0.25rem' }}>
                 <strong style={{ color: '#ffffff' }}>Fare Paid:</strong>
-                <strong style={{ color: 'var(--accent)' }}>LKR {receipt.fare.toLocaleString()}</strong>
+                <strong style={{ color: '#ffffff' }}>LKR {receipt.fare.toLocaleString()}</strong>
               </div>
             </div>
 
@@ -582,13 +726,20 @@ function App() {
               </span>
             </div>
             
-            <button
-              onClick={() => setReceipt(null)}
-              className="btn btn-primary"
-              style={{ marginTop: '1.5rem' }}
-            >
-              Done
-            </button>
+            <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem' }}>
+              <button
+                onClick={handleDownloadTicket}
+                className="btn btn-secondary"
+              >
+                Download Ticket (TXT)
+              </button>
+              <button
+                onClick={() => setReceipt(null)}
+                className="btn btn-primary"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

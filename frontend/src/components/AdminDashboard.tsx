@@ -23,6 +23,21 @@ interface JourneyStat {
   segments: Segment[];
 }
 
+interface WaitlistRecord {
+  id: string;
+  passengerName: string;
+  passengerEmail: string;
+  status: string; // 'WAITING' | 'PROMOTED' | 'EXPIRED'
+  createdAt: string;
+  startStation: { name: string };
+  endStation: { name: string };
+  seat: {
+    seatNumber: string;
+    coach: { name: string };
+  };
+  journey: { name: string };
+}
+
 interface DashboardStats {
   summary: {
     totalRevenue: number;
@@ -31,6 +46,8 @@ interface DashboardStats {
     cancelledBookings: number;
   };
   journeys: JourneyStat[];
+  bookings: BookingRecord[];
+  waitlists: WaitlistRecord[];
 }
 
 interface BookingRecord {
@@ -52,7 +69,6 @@ interface BookingRecord {
 
 export const AdminDashboard: React.FC = () => {
   const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [bookings, setBookings] = useState<BookingRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancellingRef, setCancellingRef] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -62,37 +78,10 @@ export const AdminDashboard: React.FC = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      // Fetch stats
       const statsRes = await fetch(`${apiBaseUrl}/admin/stats`);
       if (!statsRes.ok) throw new Error('Failed to fetch admin stats');
       const statsData = await statsRes.json();
       setStats(statsData);
-
-      // Fetch all bookings (mocked or custom fetched from stats or direct endpoint)
-      // For this simple application, we can fetch all bookings by requesting a custom list or extracting from DB.
-      // Let's call the journey endpoint or create a small fetch. Wait, we can fetch all journeys or retrieve bookings from stats.
-      // Wait, we can define a small bookings list query or fetch them. Let's make an endpoint on the backend for bookings if we want,
-      // or we can extract the bookings from a stats/bookings endpoint.
-      // Actually, let's look at the database. In our stats endpoint, we fetched all bookings from database!
-      // Let's add a small helper in the admin controller to return all bookings, or let's return them in the stats query itself.
-      // Oh! In `getAdminDashboardStats`, we only queried bookings to compute revenue, but didn't return the full bookings list.
-      // Let's check: can we fetch the bookings? Let's check if the stats response includes bookings or if we should fetch them.
-      // Let's modify the stats response to include the bookings list, or fetch them.
-      // Let's check `getAdminDashboardStats` in `admin.controller.ts`. It doesn't return the bookings list in the JSON.
-      // We can easily fetch them or modify the controller. Let's make sure we can fetch them. Let's make a call to a `/api/admin/bookings` or fetch them from the stats endpoint.
-      // Wait! Let's modify `getAdminDashboardStats` later if needed, or we can just fetch bookings from a separate endpoint `/api/admin/stats` that we can update,
-      // or we can write a simple endpoint. In fact, let's just make the stats endpoint return the bookings list as well!
-      // That is extremely easy. We will update the admin controller to return the bookings list.
-      // For now, let's write the AdminDashboard assuming the API returns `{ summary, journeys, bookings }`.
-      if (statsData.bookings) {
-        setBookings(statsData.bookings);
-      } else {
-        // If not present, we will support it. Let's make sure we update the backend admin controller to include bookings!
-      }
-      
-      if (statsData.bookings) {
-        setBookings(statsData.bookings);
-      }
       setError(null);
     } catch (err: any) {
       setError(err.message);
@@ -133,8 +122,8 @@ export const AdminDashboard: React.FC = () => {
     return <div style={{ padding: '2rem', color: 'var(--state-booked)' }}>Error: {error}</div>;
   }
 
-  // Fallback to extract bookings from stats if available (we will add it in the backend)
-  const bookingsList = stats?.bookings || bookings || [];
+  const bookingsList = stats?.bookings || [];
+  const waitlistsList = stats?.waitlists || [];
 
   return (
     <div>
@@ -152,8 +141,8 @@ export const AdminDashboard: React.FC = () => {
             <div className="stat-value">{stats.summary.confirmedBookings}</div>
           </div>
           <div className="stat-box glass-card">
-            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Cancelled Tickets</span>
-            <div className="stat-value" style={{ color: 'var(--text-muted)' }}>{stats.summary.cancelledBookings}</div>
+            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Active Waitlisted Passengers</span>
+            <div className="stat-value">{waitlistsList.filter(w => w.status === 'WAITING').length}</div>
           </div>
           <div className="stat-box glass-card">
             <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textTransform: 'uppercase' }}>Total Bookings Logged</span>
@@ -178,19 +167,19 @@ export const AdminDashboard: React.FC = () => {
                   Departing: {new Date(journey.departureTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </span>
               </div>
-              <div style={{ fontSize: '0.9rem', padding: '0.2rem 0.6rem', background: 'rgba(255,255,255,0.05)', borderRadius: '6px' }}>
-                Avg Occupancy: <strong style={{ color: 'var(--accent)' }}>{journey.avgOccupancy.toFixed(1)}%</strong>
+              <div style={{ fontSize: '0.85rem', padding: '0.2rem 0.6rem', background: 'rgba(255,255,255,0.03)', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                Avg Occupancy: <strong>{journey.avgOccupancy.toFixed(1)}%</strong>
               </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
               {journey.segments.map((seg, idx) => {
-                // Color based on occupancy
-                let barColor = 'rgba(16, 185, 129, 0.5)'; // green
+                // Monochrome colors based on occupancy
+                let barColor = 'var(--state-empty)'; // zinc-700
                 if (seg.occupancyRate > 75) {
-                  barColor = 'rgba(239, 68, 68, 0.7)'; // red
+                  barColor = '#ffffff'; // white highlight for high load
                 } else if (seg.occupancyRate > 40) {
-                  barColor = 'rgba(245, 158, 11, 0.6)'; // orange
+                  barColor = 'var(--state-shared)'; // zinc-400
                 }
 
                 return (
@@ -221,7 +210,7 @@ export const AdminDashboard: React.FC = () => {
 
       {/* Booking List */}
       <h3 style={{ margin: '2.5rem 0 1rem', fontSize: '1.4rem' }}>Passenger Manifest & Booking Ledger</h3>
-      <div className="glass-card" style={{ padding: '1rem', overflowX: 'auto' }}>
+      <div className="glass-card" style={{ padding: '1rem', overflowX: 'auto', marginBottom: '2.5rem' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '800px' }}>
           <thead>
             <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
@@ -246,7 +235,7 @@ export const AdminDashboard: React.FC = () => {
               bookingsList.map((b) => (
                 <tr key={b.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.9rem' }}>
                   <td style={{ padding: '1rem' }}>
-                    <code style={{ background: 'rgba(255,255,255,0.05)', padding: '0.2rem 0.4rem', borderRadius: '4px', color: 'var(--accent)' }}>
+                    <code style={{ background: 'rgba(255,255,255,0.05)', padding: '0.2rem 0.4rem', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)', color: '#ffffff' }}>
                       {b.bookingReference}
                     </code>
                   </td>
@@ -270,12 +259,13 @@ export const AdminDashboard: React.FC = () => {
                   <td style={{ padding: '1rem' }}>
                     <span
                       style={{
-                        padding: '0.2rem 0.5rem',
-                        borderRadius: '6px',
+                        padding: '0.25rem 0.5rem',
+                        borderRadius: '4px',
                         fontSize: '0.75rem',
-                        fontWeight: 600,
-                        background: b.status === 'CONFIRMED' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                        color: b.status === 'CONFIRMED' ? 'var(--state-shared)' : 'var(--state-booked)',
+                        fontWeight: 700,
+                        background: b.status === 'CONFIRMED' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(82, 82, 91, 0.08)',
+                        border: b.status === 'CONFIRMED' ? '1px solid rgba(255, 255, 255, 0.2)' : '1px solid rgba(82, 82, 91, 0.2)',
+                        color: b.status === 'CONFIRMED' ? '#ffffff' : 'var(--text-muted)',
                       }}
                     >
                       {b.status}
@@ -287,22 +277,22 @@ export const AdminDashboard: React.FC = () => {
                         onClick={() => handleCancelBooking(b.bookingReference)}
                         disabled={cancellingRef === b.bookingReference}
                         style={{
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          color: 'var(--state-booked)',
-                          border: '1px solid rgba(239, 68, 68, 0.2)',
+                          background: 'rgba(255, 255, 255, 0.02)',
+                          color: '#ffffff',
+                          border: '1px solid rgba(255, 255, 255, 0.1)',
                           padding: '0.3rem 0.6rem',
-                          borderRadius: '6px',
+                          borderRadius: '4px',
                           cursor: 'pointer',
                           fontSize: '0.8rem',
-                          transition: 'all 0.3s ease',
+                          transition: 'all 0.2s ease',
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.background = 'var(--state-booked)';
-                          e.currentTarget.style.color = '#ffffff';
+                          e.currentTarget.style.background = '#ffffff';
+                          e.currentTarget.style.color = '#000000';
                         }}
                         onMouseLeave={(e) => {
-                          e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)';
-                          e.currentTarget.style.color = 'var(--state-booked)';
+                          e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)';
+                          e.currentTarget.style.color = '#ffffff';
                         }}
                       >
                         {cancellingRef === b.bookingReference ? 'Cancelling...' : 'Cancel'}
@@ -311,6 +301,62 @@ export const AdminDashboard: React.FC = () => {
                   </td>
                 </tr>
               ))
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Waitlist Registry Ledger */}
+      <h3 style={{ margin: '2rem 0 1rem', fontSize: '1.4rem' }}>Waitlist Registry Logs</h3>
+      <div className="glass-card" style={{ padding: '1rem', overflowX: 'auto', marginBottom: '2rem' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', minWidth: '800px' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+              <th style={{ padding: '1rem' }}>Registered At</th>
+              <th style={{ padding: '1rem' }}>Passenger</th>
+              <th style={{ padding: '1rem' }}>Journey</th>
+              <th style={{ padding: '1rem' }}>Leg Requested</th>
+              <th style={{ padding: '1rem' }}>Seat</th>
+              <th style={{ padding: '1rem' }}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {waitlistsList.length === 0 ? (
+              <tr>
+                <td colSpan={6} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+                  No waitlisted entries found.
+                </td>
+              </tr>
+            ) : (
+              waitlistsList.map((w) => {
+                let badgeClass = 'badge-waiting';
+                if (w.status === 'PROMOTED') badgeClass = 'badge-promoted';
+                if (w.status === 'EXPIRED') badgeClass = 'badge-cancelled';
+
+                return (
+                  <tr key={w.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', fontSize: '0.9rem' }}>
+                    <td style={{ padding: '1rem', color: 'var(--text-muted)' }}>
+                      {new Date(w.createdAt).toLocaleString()}
+                    </td>
+                    <td style={{ padding: '1rem' }}>
+                      <div>{w.passengerName}</div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{w.passengerEmail}</div>
+                    </td>
+                    <td style={{ padding: '1rem' }}>{w.journey.name}</td>
+                    <td style={{ padding: '1rem' }}>
+                      {w.startStation.name} → {w.endStation.name}
+                    </td>
+                    <td style={{ padding: '1rem' }}>
+                      {w.seat.coach.name} - Seat {w.seat.seatNumber}
+                    </td>
+                    <td style={{ padding: '1rem' }}>
+                      <span className={`badge ${badgeClass}`}>
+                        {w.status}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

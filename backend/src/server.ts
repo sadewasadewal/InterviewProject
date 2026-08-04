@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import { getStations, getJourneys, getJourneyAvailability } from './controllers/journey.controller';
 import { createBooking, cancelBooking } from './controllers/booking.controller';
 import { getAdminDashboardStats } from './controllers/admin.controller';
+import { joinWaitlist } from './controllers/waitlist.controller';
 
 dotenv.config();
 
@@ -23,6 +24,7 @@ app.get('/api/journeys/:id/availability', getJourneyAvailability);
 
 app.post('/api/bookings', createBooking);
 app.post('/api/bookings/:reference/cancel', cancelBooking);
+app.post('/api/waitlists', joinWaitlist);
 
 app.get('/api/admin/stats', getAdminDashboardStats);
 

@@ -71,6 +71,11 @@ export const SeatMap: React.FC<SeatMapProps> = ({
         viewBox={`0 0 ${svgWidth} ${svgHeight}`}
         className="train-coach-svg"
       >
+        <defs>
+          <pattern id="diagonal-stripes" width="6" height="6" patternTransform="rotate(45 0 0)" patternUnits="userSpaceOnUse">
+            <line x1="0" y1="0" x2="0" y2="6" stroke="rgba(255, 255, 255, 0.12)" strokeWidth="1.5" />
+          </pattern>
+        </defs>
         {/* Coach Body Outline */}
         <rect
           x="10"
@@ -144,21 +149,31 @@ export const SeatMap: React.FC<SeatMapProps> = ({
             }
 
             const handleClick = () => {
-              if (seat.status !== 'OCCUPIED') {
-                onSeatSelect(seat);
-              }
+              onSeatSelect(seat);
             };
 
             return (
               <g key={seat.id} onClick={handleClick}>
                 {/* Seat Cushion */}
-                <rect
+                 <rect
                   x={x}
                   y={y}
                   width={w}
                   height={h}
                   className={`seat-rect ${seatClass}`}
                 />
+                {seat.status === 'OCCUPIED' && !isSelected && (
+                  <rect
+                    x={x}
+                    y={y}
+                    width={w}
+                    height={h}
+                    fill="url(#diagonal-stripes)"
+                    rx="5"
+                    ry="5"
+                    style={{ pointerEvents: 'none' }}
+                  />
+                )}
                 {/* Seat Backrest (Visual refinement) */}
                 <rect
                   x={x + 3}

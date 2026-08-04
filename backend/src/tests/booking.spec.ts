@@ -160,4 +160,67 @@ describe('Booking API & Segment Logic Tests', () => {
     if (pnr1) await request(app).post(`/api/bookings/${pnr1}/cancel`);
     if (pnr2) await request(app).post(`/api/bookings/${pnr2}/cancel`);
   });
+
+  it('4. Should register waitlist and auto-promote waitlisted passenger on cancellation', async () => {
+    // 4.1 Create an active booking to block the seat segment
+    const bookRes = await request(app)
+      .post('/api/bookings')
+      .send({
+        journeyId,
+        seatId,
+        passengerName: 'Blocking Passenger',
+        passengerEmail: 'blocker@example.com',
+        startStationId,
+        endStationId: intermediateStationId,
+      });
+
+    expect(bookRes.status).toBe(201);
+    const originalPnr = bookRes.body.bookingReference;
+
+    // 4.2 Submit a waitlist request for the blocked seat
+    const waitlistRes = await request(app)
+      .post('/api/waitlists')
+      .send({
+        journeyId,
+        seatId,
+        passengerName: 'Waitlisted Passenger',
+        passengerEmail: 'waitlisted@example.com',
+        startStationId,
+        endStationId: intermediateStationId,
+      });
+
+    expect(waitlistRes.status).toBe(201);
+    expect(waitlistRes.body.status).toBe('WAITING');
+    const waitlistId = waitlistRes.body.id;
+
+    // 4.3 Cancel original booking to trigger waitlist auto-promotion
+    const cancelRes = await request(app)
+      .post(`/api/bookings/${originalPnr}/cancel`);
+
+    expect(cancelRes.status).toBe(200);
+    expect(cancelRes.body.message).toContain('Promoted');
+
+    // 4.4 Check that waitlist record is now PROMOTED
+    const wlRecord = await prisma.waitlist.findUnique({
+      where: { id: waitlistId },
+    });
+    expect(wlRecord?.status).toBe('PROMOTED');
+
+    // 4.5 Check that a new confirmed booking exists for the waitlisted passenger
+    const newBooking = await prisma.booking.findFirst({
+      where: {
+        journeyId,
+        seatId,
+        passengerEmail: 'waitlisted@example.com',
+        status: 'CONFIRMED',
+      },
+    });
+    expect(newBooking).not.toBeNull();
+    expect(newBooking?.passengerName).toBe('Waitlisted Passenger');
+
+    // Cleanup
+    if (newBooking) {
+      await request(app).post(`/api/bookings/${newBooking.bookingReference}/cancel`);
+    }
+  });
 });

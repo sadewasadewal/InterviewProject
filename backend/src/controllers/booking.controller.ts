@@ -197,30 +197,157 @@ export async function createBooking(req: Request, res: Response) {
   }
 }
 
-// Cancel an existing booking (to test freeing segments)
+// Cancel an existing booking and auto-promote waitlisted passengers
 export async function cancelBooking(req: Request, res: Response) {
+  const { reference } = req.params;
+
   try {
-    const { reference } = req.params;
+    const result = await prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findUnique({
+        where: { bookingReference: reference },
+        include: {
+          seat: { include: { coach: true } },
+          journey: true,
+        },
+      });
 
-    const booking = await prisma.booking.findUnique({
-      where: { bookingReference: reference },
+      if (!booking) {
+        throw new Error('Booking not found');
+      }
+
+      if (booking.status === 'CANCELLED') {
+        throw new Error('Booking is already cancelled');
+      }
+
+      // 1. Cancel the booking
+      const updatedBooking = await tx.booking.update({
+        where: { id: booking.id },
+        data: { status: 'CANCELLED' },
+      });
+
+      // 2. Fetch all WAITING waitlists for this seat and journey, in chronological order
+      const waitlists = await tx.waitlist.findMany({
+        where: {
+          journeyId: booking.journeyId,
+          seatId: booking.seatId,
+          status: 'WAITING',
+        },
+        include: {
+          startStation: true,
+          endStation: true,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      const promotedPassengerNames: string[] = [];
+
+      // 3. For each waitlist entry, check if their leg is currently vacant
+      for (const w of waitlists) {
+        const overlappingActiveBookings = await tx.booking.findMany({
+          where: {
+            journeyId: booking.journeyId,
+            seatId: booking.seatId,
+            status: 'CONFIRMED',
+            startSequence: { lt: w.endSequence },
+            endSequence: { gt: w.startSequence },
+          },
+        });
+
+        if (overlappingActiveBookings.length === 0) {
+          // No overlaps! We can promote this waitlist entry
+          const travelDistance = Math.abs(w.endStation.distanceKm - w.startStation.distanceKm);
+
+          // Get total journey distance
+          const journeyStations = await tx.journeyStation.findMany({
+            where: { journeyId: booking.journeyId },
+            include: { station: true },
+            orderBy: { stopSequence: 'asc' },
+          });
+          const firstJS = journeyStations[0];
+          const lastJS = journeyStations[journeyStations.length - 1];
+          const totalDistance = Math.abs(lastJS.station.distanceKm - firstJS.station.distanceKm);
+
+          // Calculate current segment occupancy rate
+          const totalSeatsCount = await tx.seat.count();
+          const segmentBookedCount = await tx.booking.count({
+            where: {
+              journeyId: booking.journeyId,
+              status: 'CONFIRMED',
+              startSequence: { lt: w.endSequence },
+              endSequence: { gt: w.startSequence },
+            },
+          });
+          const occupancyRate = totalSeatsCount > 0 ? segmentBookedCount / totalSeatsCount : 0;
+
+          // Calculate fare
+          const fare = calculateFare(
+            travelDistance,
+            booking.seat.coach.coachClass,
+            totalDistance,
+            occupancyRate
+          );
+
+          // Generate unique PNR
+          let bookingRef = generatePNR();
+          let refExists = true;
+          while (refExists) {
+            const existingRef = await tx.booking.findUnique({
+              where: { bookingReference: bookingRef },
+            });
+            if (!existingRef) {
+              refExists = false;
+            } else {
+              bookingRef = generatePNR();
+            }
+          }
+
+          // Create the booking
+          await tx.booking.create({
+            data: {
+              journeyId: booking.journeyId,
+              seatId: booking.seatId,
+              passengerName: w.passengerName,
+              passengerEmail: w.passengerEmail,
+              startStationId: w.startStationId,
+              endStationId: w.endStationId,
+              startSequence: w.startSequence,
+              endSequence: w.endSequence,
+              fare,
+              bookingReference: bookingRef,
+              status: 'CONFIRMED',
+            },
+          });
+
+          // Update waitlist status
+          await tx.waitlist.update({
+            where: { id: w.id },
+            data: { status: 'PROMOTED' },
+          });
+
+          promotedPassengerNames.push(w.passengerName);
+        }
+      }
+
+      return {
+        booking: updatedBooking,
+        promotedCount: promotedPassengerNames.length,
+        promotedNames: promotedPassengerNames,
+      };
     });
 
-    if (!booking) {
-      return res.status(404).json({ error: 'Booking not found' });
-    }
-
-    if (booking.status === 'CANCELLED') {
-      return res.status(400).json({ error: 'Booking is already cancelled' });
-    }
-
-    const updatedBooking = await prisma.booking.update({
-      where: { id: booking.id },
-      data: { status: 'CANCELLED' },
+    res.json({
+      message: result.promotedCount > 0
+        ? `Booking cancelled successfully. Promoted ${result.promotedCount} waitlisted passengers: ${result.promotedNames.join(', ')}`
+        : 'Booking cancelled successfully.',
+      booking: result.booking,
     });
-
-    res.json({ message: 'Booking cancelled successfully', booking: updatedBooking });
   } catch (error: any) {
+    if (error.message.includes('not found')) {
+      return res.status(404).json({ error: error.message });
+    }
+    if (error.message.includes('already cancelled')) {
+      return res.status(400).json({ error: error.message });
+    }
     res.status(500).json({ error: error.message });
   }
 }

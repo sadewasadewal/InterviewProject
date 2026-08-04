@@ -18,6 +18,8 @@ model Station {
   journeyStations JourneyStation[]
   bookingsStart   Booking[]        @relation("StartStation")
   bookingsEnd     Booking[]        @relation("EndStation")
+  waitlistsStart  Waitlist[]       @relation("StartStationWaitlist")
+  waitlistsEnd    Waitlist[]       @relation("EndStationWaitlist")
 }
 
 model Journey {
@@ -31,6 +33,7 @@ model Journey {
 
   journeyStations JourneyStation[]
   bookings        Booking[]
+  waitlists       Waitlist[]
 }
 
 model JourneyStation {
@@ -69,6 +72,7 @@ model Seat {
 
   coach    Coach     @relation(fields: [coachId], references: [id], onDelete: Cascade)
   bookings Booking[]
+  waitlists Waitlist[]
 
   @@unique([coachId, seatNumber])
 }
@@ -93,4 +97,24 @@ model Booking {
   seat         Seat    @relation(fields: [seatId], references: [id], onDelete: Cascade)
   startStation Station @relation(fields: [startStationId], references: [id], name: "StartStation", onDelete: Cascade)
   endStation   Station @relation(fields: [endStationId], references: [id], name: "EndStation", onDelete: Cascade)
+}
+
+model Waitlist {
+  id               String   @id @default(uuid())
+  journeyId        String
+  seatId           String
+  passengerName    String
+  passengerEmail   String
+  startStationId   String
+  endStationId     String
+  startSequence    Int
+  endSequence      Int
+  status           String   @default("WAITING") // "WAITING" | "PROMOTED" | "EXPIRED"
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  journey      Journey @relation(fields: [journeyId], references: [id], onDelete: Cascade)
+  seat         Seat    @relation(fields: [seatId], references: [id], onDelete: Cascade)
+  startStation Station @relation(fields: [startStationId], references: [id], name: "StartStationWaitlist", onDelete: Cascade)
+  endStation   Station @relation(fields: [endStationId], references: [id], name: "EndStationWaitlist", onDelete: Cascade)
 }

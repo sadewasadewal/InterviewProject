@@ -3,10 +3,16 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
-  console.log('Seeding database...');
+  console.log('Clearing old journey data for re-seeding...');
+  // Delete old journeys (which cascade deletes journeyStations and bookings)
+  await prisma.journey.deleteMany({});
+  await prisma.station.deleteMany({});
+  await prisma.coach.deleteMany({});
 
-  // 1. Create Stations
-  const stationsData = [
+  console.log('Seeding stations for multiple lines...');
+
+  // 1. Define Stations data with their corresponding lines
+  const mainLineStations = [
     { name: 'Colombo Fort', code: 'FOT', distanceKm: 0.0 },
     { name: 'Gampaha', code: 'GPH', distanceKm: 28.4 },
     { name: 'Polgahawela', code: 'PLG', distanceKm: 73.4 },
@@ -23,18 +29,51 @@ async function main() {
     { name: 'Badulla', code: 'BAD', distanceKm: 292.4 },
   ];
 
-  const stations = [];
-  for (const item of stationsData) {
-    const station = await prisma.station.upsert({
-      where: { name: item.name },
-      update: { distanceKm: item.distanceKm, code: item.code },
-      create: { name: item.name, code: item.code, distanceKm: item.distanceKm },
-    });
-    stations.push(station);
-  }
-  console.log(`Seeded ${stations.length} stations.`);
+  const northernLineStations = [
+    { name: 'Colombo Fort', code: 'FOT', distanceKm: 0.0 },
+    { name: 'Kurunegala', code: 'KGL', distanceKm: 94.0 },
+    { name: 'Anuradhapura', code: 'ANP', distanceKm: 205.0 },
+    { name: 'Vavuniya', code: 'VUN', distanceKm: 256.0 },
+    { name: 'Jaffna', code: 'JFN', distanceKm: 398.0 },
+  ];
 
-  // 2. Create Coaches & Seats
+  const coastalLineStations = [
+    { name: 'Colombo Fort', code: 'FOT', distanceKm: 0.0 },
+    { name: 'Mount Lavinia', code: 'MLV', distanceKm: 11.6 },
+    { name: 'Hikkaduwa', code: 'HKW', distanceKm: 94.5 },
+    { name: 'Galle', code: 'GLE', distanceKm: 115.3 },
+    { name: 'Weligama', code: 'WLM', distanceKm: 143.2 },
+    { name: 'Matara', code: 'MTR', distanceKm: 157.1 },
+  ];
+
+  // Helper mapping lines
+  const stationLineMap: Record<string, string[]> = {
+    MAIN_LINE: mainLineStations.map(s => s.name),
+    NORTHERN_LINE: northernLineStations.map(s => s.name),
+    COASTAL_LINE: coastalLineStations.map(s => s.name),
+  };
+
+  // Combine all unique stations
+  const allStationsDataMap: Record<string, { code: string; distanceKm: number }> = {};
+  [...mainLineStations, ...northernLineStations, ...coastalLineStations].forEach(s => {
+    allStationsDataMap[s.name] = { code: s.code, distanceKm: s.distanceKm };
+  });
+
+  const stations: Record<string, any> = {};
+  for (const name of Object.keys(allStationsDataMap)) {
+    const info = allStationsDataMap[name];
+    const station = await prisma.station.create({
+      data: {
+        name,
+        code: info.code,
+        distanceKm: info.distanceKm,
+      },
+    });
+    stations[name] = station;
+  }
+  console.log(`Seeded ${Object.keys(stations).length} unique stations across 3 lines.`);
+
+  // 2. Create Carriage classes (Coach A, B, C)
   const coachesData = [
     { name: 'Coach A (1st Class)', class: '1st Class Reserved' },
     { name: 'Coach B (2nd Class)', class: '2nd Class Reserved' },
@@ -42,27 +81,20 @@ async function main() {
   ];
 
   for (const cInfo of coachesData) {
-    const coach = await prisma.coach.upsert({
-      where: { name: cInfo.name },
-      update: { coachClass: cInfo.class },
-      create: { name: cInfo.name, coachClass: cInfo.class },
+    const coach = await prisma.coach.create({
+      data: {
+        name: cInfo.name,
+        coachClass: cInfo.class,
+      },
     });
 
-    // Create 20 seats: 5 rows of A, B, C, D (2x2 layout with aisle)
-    // Row 1: 1A, 1B, 1C, 1D. Row 5: 5A, 5B, 5C, 5D
+    // Create 20 seats (rows 1-5, cols A, B, C, D)
     const cols = ['A', 'B', 'C', 'D'];
     for (let r = 1; r <= 5; r++) {
       for (const col of cols) {
         const seatNum = `${r}${col}`;
-        await prisma.seat.upsert({
-          where: {
-            coachId_seatNumber: {
-              coachId: coach.id,
-              seatNumber: seatNum,
-            },
-          },
-          update: {},
-          create: {
+        await prisma.seat.create({
+          data: {
             coachId: coach.id,
             seatNumber: seatNum,
           },
@@ -70,30 +102,38 @@ async function main() {
       }
     }
   }
-  console.log('Seeded coaches and seats (20 seats per coach, 2x2 grid).');
+  console.log('Seeded carriage classes (1st, 2nd, 3rd Class carriages, 20 seats each).');
 
-  // 3. Create Journeys
+  // 3. Journeys Configuration
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  // Helper to add days
   const addDays = (d: Date, days: number) => {
     const result = new Date(d);
     result.setDate(result.getDate() + days);
     return result;
   };
-
   const tomorrow = addDays(today, 1);
 
-  // We will seed journeys for today and tomorrow
   const journeysConfig = [
-    { name: 'Podi Menike - Outbound', departureTime: 5.91, direction: 'OUTBOUND', date: today }, // 5:55 AM
-    { name: 'Udarata Menike - Outbound', departureTime: 8.5, direction: 'OUTBOUND', date: today }, // 8:30 AM
-    { name: 'Podi Menike - Inbound', departureTime: 8.5, direction: 'INBOUND', date: today }, // 8:30 AM (starts Badulla -> Colombo)
-    
-    { name: 'Podi Menike - Outbound', departureTime: 5.91, direction: 'OUTBOUND', date: tomorrow },
-    { name: 'Udarata Menike - Outbound', departureTime: 8.5, direction: 'OUTBOUND', date: tomorrow },
-    { name: 'Podi Menike - Inbound', departureTime: 8.5, direction: 'INBOUND', date: tomorrow },
+    // 3.1 Main Line (Colombo Fort - Badulla)
+    { name: 'Podi Menike (Outbound) - Main Line', departureTime: 5.91, direction: 'OUTBOUND', date: today, line: 'MAIN_LINE' },
+    { name: 'Udarata Menike (Outbound) - Main Line', departureTime: 8.5, direction: 'OUTBOUND', date: today, line: 'MAIN_LINE' },
+    { name: 'Podi Menike (Inbound) - Main Line', departureTime: 8.5, direction: 'INBOUND', date: today, line: 'MAIN_LINE' },
+    { name: 'Podi Menike (Outbound) - Main Line', departureTime: 5.91, direction: 'OUTBOUND', date: tomorrow, line: 'MAIN_LINE' },
+    { name: 'Podi Menike (Inbound) - Main Line', departureTime: 8.5, direction: 'INBOUND', date: tomorrow, line: 'MAIN_LINE' },
+
+    // 3.2 Northern Line (Colombo Fort - Jaffna)
+    { name: 'Yal Devi (Outbound) - Northern Line', departureTime: 6.5, direction: 'OUTBOUND', date: today, line: 'NORTHERN_LINE' },
+    { name: 'Yal Devi (Inbound) - Northern Line', departureTime: 9.75, direction: 'INBOUND', date: today, line: 'NORTHERN_LINE' },
+    { name: 'Yal Devi (Outbound) - Northern Line', departureTime: 6.5, direction: 'OUTBOUND', date: tomorrow, line: 'NORTHERN_LINE' },
+    { name: 'Yal Devi (Inbound) - Northern Line', departureTime: 9.75, direction: 'INBOUND', date: tomorrow, line: 'NORTHERN_LINE' },
+
+    // 3.3 Coastal Line (Colombo Fort - Matara)
+    { name: 'Samudra Devi (Outbound) - Coastal Line', departureTime: 7.25, direction: 'OUTBOUND', date: today, line: 'COASTAL_LINE' },
+    { name: 'Samudra Devi (Inbound) - Coastal Line', departureTime: 14.75, direction: 'INBOUND', date: today, line: 'COASTAL_LINE' },
+    { name: 'Samudra Devi (Outbound) - Coastal Line', departureTime: 7.25, direction: 'OUTBOUND', date: tomorrow, line: 'COASTAL_LINE' },
+    { name: 'Samudra Devi (Inbound) - Coastal Line', departureTime: 14.75, direction: 'INBOUND', date: tomorrow, line: 'COASTAL_LINE' },
   ];
 
   for (const jCfg of journeysConfig) {
@@ -111,15 +151,21 @@ async function main() {
       },
     });
 
-    // Populate Journey Stations based on direction
-    const orderedStations = [...stations].sort((a, b) => a.distanceKm - b.distanceKm);
+    // Resolve stations for this specific line
+    const lineStationNames = stationLineMap[jCfg.line];
+    const lineStations = lineStationNames.map(name => stations[name]);
+
+    // Sort by distance from Colombo Fort
+    const sortedLineStations = [...lineStations].sort((a, b) => a.distanceKm - b.distanceKm);
+    
+    // Reverse sequence order if Inbound
     if (jCfg.direction === 'INBOUND') {
-      orderedStations.reverse();
+      sortedLineStations.reverse();
     }
 
     let runningTime = new Date(depTime);
-    for (let idx = 0; idx < orderedStations.length; idx++) {
-      const station = orderedStations[idx];
+    for (let idx = 0; idx < sortedLineStations.length; idx++) {
+      const station = sortedLineStations[idx];
       
       let arrival: Date;
       let departure: Date;
@@ -128,16 +174,16 @@ async function main() {
         arrival = new Date(runningTime);
         departure = new Date(runningTime);
       } else {
-        // Assume travel time: approx 1.7 minutes per km + 3 mins stop
-        const prevStation = orderedStations[idx - 1];
+        const prevStation = sortedLineStations[idx - 1];
         const distDiff = Math.abs(station.distanceKm - prevStation.distanceKm);
-        const travelMins = Math.round(distDiff * 1.7 + 2); // 1.7 min/km + 2 mins buffer
+        
+        // Assume travel time: ~1.5 min per km + 3 mins stop
+        const travelMins = Math.round(distDiff * 1.5 + 2);
         
         runningTime.setMinutes(runningTime.getMinutes() + travelMins);
         arrival = new Date(runningTime);
         
-        // Stop duration at station (3 minutes, 10 mins at Kandy)
-        const stopMins = station.name === 'Kandy' ? 10 : 3;
+        const stopMins = station.name === 'Kandy' || station.name === 'Anuradhapura' || station.name === 'Galle' ? 10 : 3;
         runningTime.setMinutes(runningTime.getMinutes() + stopMins);
         departure = new Date(runningTime);
       }
@@ -154,8 +200,8 @@ async function main() {
     }
   }
 
-  console.log('Seeded journeys with station stops.');
-  console.log('Database seeding complete!');
+  console.log('Seeded multi-line journeys with intermediate stops.');
+  console.log('Database re-seeding complete!');
 }
 
 main()

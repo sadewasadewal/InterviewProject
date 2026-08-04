@@ -83,6 +83,16 @@ export async function getAdminDashboardStats(req: Request, res: Response) {
       });
     }
 
+    const waitlistRecords = await prisma.waitlist.findMany({
+      include: {
+        journey: true,
+        seat: { include: { coach: true } },
+        startStation: true,
+        endStation: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
     res.json({
       summary: {
         totalRevenue,
@@ -92,6 +102,7 @@ export async function getAdminDashboardStats(req: Request, res: Response) {
       },
       journeys: journeyStats,
       bookings,
+      waitlists: waitlistRecords,
     });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
