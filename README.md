@@ -13,10 +13,8 @@ By reselling seats vacated partway through the trip, this system maximizes seat 
   - Interactive **SVG-based Seat Map** rendering real-time booking states.
 - **Backend**: Node.js + Express with TypeScript
   - Rest APIs for journey listing, segment availability querying, booking creation/cancellation, and admin analytics.
-- **Database**: PostgreSQL
-  - Relational database with full transaction safety.
-- **Orchestration**: Docker Compose
-  - Simplifies local setup with a single command, wrapping the database, backend service, and frontend development server.
+- **Database**: SQLite (via Prisma ORM for zero-dependency local setup, with PostgreSQL migration compatibility)
+- **Orchestration**: Docker Compose or standalone local dev servers
 
 ---
 
@@ -35,7 +33,7 @@ A journey is modeled as an ordered sequence of stations. Rather than storing boo
 ### 2. Concurrency Locking (`SELECT FOR UPDATE`)
 To prevent double booking when multiple users submit concurrent requests for the same seat on overlapping legs:
 - All booking attempts are wrapped in a database transaction.
-- We issue a row-level lock on the specific seat record:
+- When running with PostgreSQL, we issue a row-level lock on the specific seat record:
   ```sql
   SELECT id FROM "Seat" WHERE id = $1 FOR UPDATE;
   ```
@@ -71,37 +69,60 @@ Instead of rigid distance fares, we implement a premium fare logic:
 
 ## 🚀 Running the Project
 
-### Prerequisites
-Make sure you have [Docker](https://www.docker.com/) and [Docker Compose](https://docs.docker.com/compose/) installed on your machine.
+### Option A: Quick Local Run (Zero External Dependencies)
 
-### Run in One Shot
-Run the following command in the root folder of the project:
+#### 1. Start Backend
 ```bash
-docker-compose up --build
+cd backend
+npm install
+npx prisma generate
+npm run dev
+```
+The backend API server will start on **http://localhost:5001**.
+
+#### 2. Start Frontend
+In a new terminal window:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+The web application will be live at:
+👉 **[http://localhost:5173](http://localhost:5173)**
+
+---
+
+### Option B: Run with Docker Compose
+
+Make sure Docker is running on your machine, then run in the root directory:
+```bash
+docker compose up --build
 ```
 
-This will spin up:
-1. **PostgreSQL Database** on port `5432`
-2. **Node.js Express API Server** on port `5001`
-3. **Vite React Client Application** on port `5173`
+This starts:
+1. **Express API Server** on port `5001`
+2. **Vite React Client** on port `5173`
 
-Once setup is complete (and the database healthcheck passes), the backend will automatically run migrations and run the seeding script.
-
-Open your browser and navigate to:
+Navigate to:
 👉 **[http://localhost:5173](http://localhost:5173)**
 
 ---
 
 ## 🧪 Running Automated Tests
 
-We have written integration and concurrency tests in Jest. To run the tests, execute the test suite inside the backend container.
-
-With Docker Compose running:
+Run the Jest integration and concurrency tests in the `backend` folder:
 ```bash
-docker-compose exec backend npm run test
+cd backend
+npm test
+```
+Or if running via Docker:
+```bash
+docker compose exec backend npm run test
 ```
 
 This test suite verifies:
 1. **API Health check**.
 2. **Segment Occupancy Logic**: Reserving a leg, verifying that overlapping searches show as occupied, and verifying that adjacent legs show as vacated/reusable.
 3. **Concurrency Control**: Sending parallel requests for the same seat on overlapping legs, confirming that only one succeeds with a `201 Created` status while the other fails with `409 Conflict`.
+4. **Waitlist Auto-Promotion**: Registering waitlists and promoting passengers when conflicting seats are cancelled.
+
